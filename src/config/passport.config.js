@@ -1,9 +1,9 @@
 import passport from "passport";
 import jwt from "passport-jwt";
 import localStrategy from "passport-local";
-import { userModel } from "../dao/models/user.model.js";
-import { JWT_SECRET } from "../utils/jwtFunctions.js";
+import { userRepository } from "../repository/index.js";
 import { verifyPassword, createHash } from "../utils/hash.functions.js";
+import { config } from "../config/config.js";
 
 const LocalStrategy = localStrategy.Strategy;
 const JWTStrategy = jwt.Strategy;
@@ -19,19 +19,28 @@ function initializePassport() {
     "jwt",
     new JWTStrategy(
       {
-        jwtFromRequest: ExtractJWT.fromExtractors([cookieExtractor]),
-        secretOrKey: JWT_SECRET,
+        jwtFromRequest: ExtractJWT.fromExtractors([
+          ExtractJWT.fromAuthHeaderAsBearerToken(),
+          cookieExtractor,
+        ]),
+        secretOrKey: config.JWT_SECRET,
       },
       async (payload, done) => {
         try {
-          done(null, payload);
+          const user = await userRepository.findOne({ email: payload.email }, { password: 0 });
+
+          if (!user) {
+            return done({ message: "User not found", status: 401 });
+          }
+
+          return done(null, user);
         } catch (error) {
-          return done(error);
+          done(error);
         }
       }
     )
   );
-
+ 
   passport.use(
     "login",
     new LocalStrategy(
@@ -40,19 +49,16 @@ function initializePassport() {
       },
       async (email, password, done) => {
         try {
-          const user = await userModel.findOne({ email });
+          const user = await userRepository.findOne({ email });
 
           if (!user) {
-            return done(null, false, { message: "Usuario no encontrado" });
+            return done(null, false, { message: "User not found" });
           }
 
-          const isPasswordCorrect = await verifyPassword(
-            password,
-            user.password
-          );
+          const isPasswordCorrect = await verifyPassword(password, user.password);
 
           if (!isPasswordCorrect) {
-            return done(null, false, { message: "Contraseña incorrecta" });
+            return done(null, false, { message: "Incorrect password" });
           }
 
           return done(null, user);
@@ -62,7 +68,7 @@ function initializePassport() {
       }
     )
   );
-
+ 
   passport.use(
     "register",
     new LocalStrategy(
@@ -80,7 +86,7 @@ function initializePassport() {
             });
           }
 
-          const userExists = await userModel.findOne({ email });
+          const userExists = await userRepository.findOne({ email });
 
           if (userExists) {
             return done(null, false, { message: "User already exists" });
@@ -88,7 +94,7 @@ function initializePassport() {
 
           const hashPassword = await createHash(password);
 
-          const user = await userModel.create({
+          const user = await userRepository.create({
             first_name,
             last_name,
             email,
@@ -104,20 +110,6 @@ function initializePassport() {
       }
     )
   );
-
-  passport.serializeUser((user, done) => {
-    done(null, user._id);
-  });
-
-  passport.deserializeUser(async (id, done) => {
-    try {
-      const user = await userModel.findById(id);
-
-      return done(null, user);
-    } catch (error) {
-      return done(`Error: ${error.message}`);
-    }
-  });
 }
 
 export { initializePassport };
